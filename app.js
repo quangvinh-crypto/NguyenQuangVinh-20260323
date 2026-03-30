@@ -19,8 +19,7 @@ app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
-const mongoUri = process.env.MONGO_URI || 'mongodb://admin:123456@localhost:27017/NNPTUD-C2?authSource=admin';
-mongoose.connect(mongoUri);
+mongoose.connect('mongodb://localhost:27017/NNPTUD-C2');
 mongoose.connection.on('connected', () => {
   console.log("connected");
 })

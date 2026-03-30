@@ -59,65 +59,134 @@ router.post('/excel', uploadExcel.single('file'), async function (req, res, next
         let getSku = products.map(p => p.sku)
         let result = [];
         let errors = [];
-        for (let index = 2; index <= worksheet.rowCount; index++) {
-            let errorRow = [];
-            const row = worksheet.getRow(index)
-            let sku = row.getCell(1).value;//unique
-            let title = row.getCell(2).value;
-            let category = row.getCell(3).value;
-            let price = Number.parseInt(row.getCell(4).value);
-            let stock = Number.parseInt(row.getCell(5).value);
-            //validate
-            if (price < 0 || isNaN(price)) {
-                errorRow.push("dinh dang price chua dung " + price)
-            }
-            if (stock < 0 || isNaN(stock)) {
-                errorRow.push("dinh dang stock chua dung " + stock)
-            }
-            if (getTitle.includes(title)) {
-                errorRow.push("title da ton tai")
-            }
-            if (getSku.includes(sku)) {
-                errorRow.push("sku da ton tai")
-            }
-            if (errorRow.length > 0) {
-                result.push({ success: false, data: errorRow })
-                continue;
-            } else {
-                let session = await mongoose.startSession()
-                session.startTransaction()
-                try {
-                    let newObj = new productModel({
-                        sku: sku,
-                        title: title,
-                        slug: slugify(title, {
-                            replacement: '-', remove: undefined,
-                            locale: 'vi',
-                            trim: true
-                        }), price: price,
-                        description: title,
-                        category: category
-                    })
-                    let newProduct = await newObj.save({ session });
-                    let newInv = new InventoryModel({
-                        product: newProduct._id,
-                        stock: stock
-                    })
-                    newInv = await newInv.save({ session })
-                    await newInv.populate('product')
-                    await session.commitTransaction();
-                    await session.endSession()
-                    getSku.push(sku);
-                    getTitle.push(title)
-                    result.push({ success: true, data: newInv });
-                } catch (error) {
-                    await session.abortTransaction();
-                    await session.endSession()
-                    errorRow.push(error.message)
-                    result.push({ success: false, data: errorRow })
+        let batchsize = 50;
+        let maxcommit = Math.ceil((worksheet.rowCount - 1) / batchsize);
+        for (let timeCommit = 0; timeCommit < maxcommit; timeCommit++) {
+            let start = 2 + batchsize * timeCommit;
+            let end = Math.min(start + batchsize - 1, worksheet.rowCount);
+            let validProduct = []
+            let session = await mongoose.startSession()
+            session.startTransaction()
+            try {
+                let mapProductToStock = new Map()
+                for (let index = start; index <= end; index++) {
+                    let errorRow = [];
+                    const row = worksheet.getRow(index)
+                    let sku = row.getCell(1).value;//unique
+                    let title = row.getCell(2).value;
+                    let category = row.getCell(3).value;
+                    let price = Number.parseInt(row.getCell(4).value);
+                    let stock = Number.parseInt(row.getCell(5).value);
+                    if (price < 0 || isNaN(price)) {
+                        errorRow.push("dinh dang price chua dung " + price)
+                    }
+                    if (stock < 0 || isNaN(stock)) {
+                        errorRow.push("dinh dang stock chua dung " + stock)
+                    }
+                    if (getTitle.includes(title)) {
+                        errorRow.push("title da ton tai")
+                    }
+                    if (getSku.includes(sku)) {
+                        errorRow.push("sku da ton tai")
+                    }
+                    if (errorRow.length > 0) {
+                        result.push({ success: false, data: errorRow })
+                        continue;
+                    } else {
+                        let newObj = new productModel({
+                            sku: sku,
+                            title: title,
+                            slug: slugify(title, {
+                                replacement: '-', remove: undefined,
+                                locale: 'vi',
+                                trim: true
+                            }), price: price,
+                            description: title,
+                            category: category
+                        })
+                        mapProductToStock.set(sku, stock);
+                        validProduct.push(newObj)
+                        getSku.push(sku);
+                        getTitle.push(title)
+                    }
                 }
+                listProduct = await productModel.insertMany(validProduct, { session })
+                let validInventory = listProduct.map(function (e) {
+                    return {
+                        product: e._id,
+                        stock: mapProductToStock.get(e.sku)
+                    }
+                })
+                validInventory = await InventoryModel.insertMany(validInventory, { session })
+                await session.commitTransaction();
+                await session.endSession()
+            } catch (error) {
+                await session.abortTransaction();
+                await session.endSession()
             }
+
         }
+        // for (let index = 2; index <= worksheet.rowCount; index++) {
+        //     let errorRow = [];
+        //     const row = worksheet.getRow(index)
+        //     let sku = row.getCell(1).value;//unique
+        //     let title = row.getCell(2).value;
+        //     let category = row.getCell(3).value;
+        //     let price = Number.parseInt(row.getCell(4).value);
+        //     let stock = Number.parseInt(row.getCell(5).value);
+        //     //validate
+        //     if (price < 0 || isNaN(price)) {
+        //         errorRow.push("dinh dang price chua dung " + price)
+        //     }
+        //     if (stock < 0 || isNaN(stock)) {
+        //         errorRow.push("dinh dang stock chua dung " + stock)
+        //     }
+        //     if (getTitle.includes(title)) {
+        //         errorRow.push("title da ton tai")
+        //     }
+        //     if (getSku.includes(sku)) {
+        //         errorRow.push("sku da ton tai")
+        //     }
+        //     if (errorRow.length > 0) {
+        //         //errors.push({ success: false, data: errorRow })
+        //         result.push({ success: false, data: errorRow })
+        //         continue;
+        //     } else {
+
+        //         let session = await mongoose.startSession()
+        //         session.startTransaction()
+        //         try {
+        //             let newObj = new productModel({
+        //                 sku: sku,
+        //                 title: title,
+        //                 slug: slugify(title, {
+        //                     replacement: '-', remove: undefined,
+        //                     locale: 'vi',
+        //                     trim: true
+        //                 }), price: price,
+        //                 description: title,
+        //                 category: category
+        //             })
+        //             let newProduct = await newObj.save({ session });
+        //             let newInv = new InventoryModel({
+        //                 product: newProduct._id,
+        //                 stock: stock
+        //             })
+        //             newInv = await newInv.save({ session })
+        //             await newInv.populate('product')
+        //             await session.commitTransaction();
+        //             await session.endSession()
+        //             getSku.push(sku);
+        //             getTitle.push(title)
+        //             result.push({ success: true, data: newInv });
+        //         } catch (error) {
+        //             await session.abortTransaction();
+        //             await session.endSession()
+        //             errorRow.push(error.message)
+        //             result.push({ success: false, data: errorRow })
+        //         }
+        //     }
+        // }
         result = result.map(function (e, index) {
             if (e.success) {
                 return (index + 1) + ": " + e.data.product.title
